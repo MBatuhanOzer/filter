@@ -1,0 +1,1 @@
+To compile this repository correctly, please ensure you place `stb_image.h` and `stb_image_write.h` from [nothings/stb](https://github.com/nothings/stb) into the `libs/` folder.
