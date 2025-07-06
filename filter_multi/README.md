@@ -1,0 +1,1 @@
+Only works in Windows because I used a platform dependent function to achieve threading.
