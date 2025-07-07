@@ -1,1 +1,4 @@
-To compile this repository correctly, please ensure you place `stb_image.h` and `stb_image_write.h` from [nothings/stb](https://github.com/nothings/stb) into the `libs/` folder.
+# Image Filter CLI
+
+Easy to use CLI image filter app. Created for learning purposes. Two version available:
+Single-threaded and multi-threaded.
