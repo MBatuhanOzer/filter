@@ -1,7 +1,13 @@
 #ifndef FILTER_H
 #define FILTER_H
 
-void grayscale(const char* inputImagePath, const char* outputImagePath);
-void invert_color(const char* inputImagePath, const char* outputImagePath);
+struct Image {
+    unsigned char* data;
+    int width, height;
+    int channels;
+};
+
+void grayscale(Image *img);
+void invert_color(Image *img);
 
 #endif
