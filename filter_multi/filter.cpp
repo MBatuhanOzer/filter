@@ -1,75 +1,101 @@
 
 #include "filter.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <windows.h> 
 
+// Number of chunks to divide the image into for processing
+constexpr int WORK_ITEMS = 100;
+// Number of threads to use for processing
+constexpr int THREAD_COUNT = 4;
 // Function declarations
-void turn_grayscale(unsigned char* image, unsigned int pixel_count);
+void grayscale_work(WorkItem* work);
 
-// Thread related struct and function
-typedef struct ThreadArgs {
-    unsigned char* image;
-    unsigned int pixel_count;
-} ThreadArgs;
+// Thread related structs and functions
+typedef struct WorkItem {
+	unsigned char* image;
+	unsigned int pixel_count;
+} WorkItem;
+typedef struct Thread_Work_Context {
+	WorkItem* works;
+	unsigned int work_count;
+	unsigned int work_index;
+} Thread_Work_Context;
+DWORD turn_grayscale_thread(void *params) {
+	Thread_Work_Context* context = (Thread_Work_Context*)params;
+	while (true) {
+		unsigned int our_item = _InterlockedIncrement64(&context->work_index);
+		our_item--;
+		if (our_item >= context->work_count) break;
+		Work_Item* work = &context->works[our_item];
+		grayscale_work(work);
+	}
+	return 0;
+}
+Thread_Work_Context* create_thread_work_context(Image* img) {
+	Thread_Work_Context* context = (Thread_Work_Context*)malloc(sizeof(Thread_Work_Context));
+	unsigned int work_chunk = (img->width * img->height) / WORK_ITEMS;
+	unsigned int remainder = (img->width * img->height) % WORK_ITEMS;
+	context->work_count = WORK_ITEMS;
+	context->work_index = 0;
+	context->works = (WorkItem*)calloc(context->work_count, sizeof(WorkItem));
+	for (int i = 0; i < WORK_ITEMS; ++i) {
+		context->works[i].image = img->data + (i * work_chunk * 4);
+		context->works[i].pixel_count = work_chunk;
+	}
+	if (remainder > 0) context->works[WORK_ITEMS - 1].pixel_count += remainder;
 
-DWORD WINAPI turn_grayscale_thread(LPVOID args) {
-    ThreadArgs* threadArgs = (ThreadArgs*)args;
-    turn_grayscale(threadArgs->image, threadArgs->pixel_count);
-    return 0;
+	return context;
+}
+void destroy_thread_work_context(Thread_Work_Context* context) {
+	if (context) {
+		free(context->works);
+		free(context);
+	}
 }
 
+// Function to invert the colors of an image
 void invert_color(Image *img) {
-    for (int i = 0; i < img->width * img->height * 4; i++) {
+	for (int i = 0; i < img->width * img->height * 4; i++) {
 		img->data[i] = 255 - img->data[i];
 	}
 
-    return;
+	return;
 }
 
-void grayscale(Image *img) {
-    unsigned int pixel_count = (unsigned int)((double)(img->width * img->height)/ 4.0);
-    ThreadArgs threadArgs1 = { 0 };
-    // thread 1
-    threadArgs1.image = img->data;
-    threadArgs1.pixel_count = pixel_count;
-    HANDLE thread1 = CreateThread(NULL, 0, turn_grayscale_thread, &threadArgs1, 0, NULL);
-    // thread 2
-    ThreadArgs threadArgs2 = { 0 };
-    threadArgs2.pixel_count = pixel_count;
-    threadArgs2.image = img->data + 4 * pixel_count;
-    HANDLE thread2 = CreateThread(NULL, 0, turn_grayscale_thread, &threadArgs2, 0, NULL);
-    // thread 3
-    ThreadArgs threadArgs3 = { 0 };
-    threadArgs3.pixel_count = pixel_count;
-    threadArgs3.image = img->data + 8 * pixel_count;
-    HANDLE thread3 = CreateThread(NULL, 0, turn_grayscale_thread, &threadArgs3, 0, NULL);
-    turn_grayscale(img->data + 12 * pixel_count, pixel_count);
-    WaitForSingleObject(thread1, INFINITE);
-    WaitForSingleObject(thread2, INFINITE);
-    WaitForSingleObject(thread3, INFINITE);
-    CloseHandle(thread1);
-    CloseHandle(thread2);
-    CloseHandle(thread3);
-    
-    return;
+// Function to convert an image to grayscale using multiple threads
+void grayscale(Image* img) {
+	Thread_Work_Context *context = create_thread_work_context(img);
+	HANDLE threads[THREAD_COUNT] = { 0 };
+	for (unsigned int i = 0; i < THREAD_COUNT; ++i) {
+		threads[i] = CreateThread(NULL, 0, turn_grayscale_thread, context, 0, NULL)
+	}
+	WaitForMultipleObjects(THREAD_COUNT, threads, TRUE, INFINITE);
+	destroy_thread_work_context(context);
+
+	return;
 }
 
-void turn_grayscale(unsigned char* image, unsigned int pixel_count) {
-    for (int i = 0; i < pixel_count; ++i) {
-        int idx = i << 2;
-        unsigned char r = image[idx];
-        unsigned char g = image[idx + 1];
-        unsigned char b = image[idx + 2];
+void grayscale_work(WorkItem *work) {
+	for (int i = 0; i < work->pixel_count; ++i) {
+		int idx = i << 2;
+		unsigned char r = work->image[idx];
+		unsigned char g = work->image[idx + 1];
+		unsigned char b = work->image[idx + 2];
 
-        unsigned char gray = (unsigned char)(
-            0.299f * r + 0.587f * g + 0.114f * b
-        );
-        image[idx] = gray;       
-        image[idx + 1] = gray;   
-        image[idx + 2] = gray;   
-    }
+		unsigned char gray = (unsigned char)(
+			0.299f * r + 0.587f * g + 0.114f * b
+		);
+		work->image[idx] = gray;       
+		work->image[idx + 1] = gray;   
+		work->image[idx + 2] = gray;   
+	}
 }
+
+
+
+
 
 
 
