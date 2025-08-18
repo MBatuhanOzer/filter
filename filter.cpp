@@ -3,20 +3,16 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <windows.h> 
+#include <Windows.h> 
 #include <assert.h>
 
-// Threading threshold
-constexpr uint64_t THRESHOLD = 720 * 1280; // Should not be less than WORK_ITEM_PIXELS
-
-// Pixels per work item
-constexpr unsigned int WORK_ITEM_PIXELS = 50000;
-
-// Thread related structs and functions
+// Structures for threading and work management
 typedef struct Work_Item {
 	unsigned char* image;
-	unsigned int pixel_count;
-} WorkItem;
+	unsigned char* output;
+	unsigned int width, height;
+	Filter_Function function;
+} Work_Item;
 
 typedef struct Thread_Work_Context {
 	Work_Item* works;
@@ -24,93 +20,210 @@ typedef struct Thread_Work_Context {
 	volatile int64_t work_index;
 } Thread_Work_Context;
 
-void grayscale_work(Work_Item* work);
+typedef struct Work_Context_Node {
+	Thread_Work_Context context;
+	Work_Context_Queue* next;
+} Work_Context_Node;
 
-DWORD WINAPI turn_grayscale_thread(void* params) {
-	Thread_Work_Context* context = (Thread_Work_Context*)params;
+typedef struct Context_Controller {
+	Work_Context_Node* head;
+	Work_Context_Node* tail;
+	CRITICAL_SECTION cs;
+	CONDITION_VARIABLE cv_start;
+	CONDITION_VARIABLE cv_done;
+	BOOL shutdown;
+} Context_Controller;
+
+// Threading threshold (by rows)
+constexpr uint64_t THRESHOLD = 500; // Should not be less than WORK_ITEM_ROWS
+
+// Rows per work item
+constexpr unsigned int WORK_ITEM_ROWS = 100;
+
+static_assert(WORK_ITEM_ROWS < THRESHOLD);
+
+unsigned int THREAD_NUM = 0;
+
+// Thread handle array
+static HANDLE* THREADS = NULL;
+
+// Global controller for managing work contexts
+static Context_Controller* CONTROLLER;
+
+// Generic filter function type
+typedef void (*Filter_Function)(Work_Item* work);
+
+static DWORD _stdcall thread_proc(void* params) {
 	while (true) {
-		int64_t our_item = InterlockedIncrement64(&context->work_index);
-		our_item--;
-		if (our_item >= context->work_count) break;
-		Work_Item* work = &context->works[our_item];
-		grayscale_work(work);
+		Work_Context_Node* node = NULL;
+		EnterCriticalSection(&CONTROLLER->cs);
+		if (CONTROLLER->shutdown) {
+			LeaveCriticalSection(&CONTROLLER->cs);
+			return 0;
+		}
+		while (CONTROLLER->head == NULL) {
+			SleepConditionVariableCS(&CONTROLLER->cv_start, &CONTROLLER->cs, INFINITE);
+		}
+		if (CONTROLLER->shutdown) {
+			LeaveCriticalSection(&CONTROLLER->cs);
+			return 0;
+		}
+		node = CONTROLLER->head;
+		LeaveCriticalSection(&CONTROLLER->cs);
+		if (node != NULL) {
+			Thread_Work_Context* context = &node->context;
+			while (context->work_index < context->work_count) {
+				unsigned int index = InterlockedIncrement64(&context->work_index) - 1;
+				if (index < context->work_count) {
+					context->works[index].function(&context->works[index]);
+				}
+			}
+		}
 	}
-	return 0;
 }
 
-Thread_Work_Context create_thread_work_context(Image* img) {
+void filter_engine_start() {
+	CONTROLLER.head = NULL;
+	CONTROLLER.tail = NULL;
+	InitializeCriticalSection(&CONTROLLER.cs);
+	InitializeConditionVariable(&CONTROLLER.cv_start);
+	InitializeConditionVariable(&CONTROLLER.cv_done);
+	CONTROLLER.shutdown = false;
+	SYSTEM_INFO sys_info;
+	GetSystemInfo(&sys_info);
+	THREAD_NUM = sys_info.dwNumberOfProcessors;
+	if (THREADS != NULL)  filter_engine_stop(); 
+	THREADS = (HANDLE*)calloc(THREAD_NUM, sizeof(HANDLE));
+	for (unsigned int i = 0; i < THREAD_NUM; ++i) {
+		THREADS[i] = CreateThread(NULL, 0, thread_proc, NULL, 0, NULL);
+		if (THREADS[i] == NULL) {
+			fprintf(stderr, "Failed to create thread %u\n", i);
+			exit(EXIT_FAILURE);
+		}
+	}
+}
+
+void filter_engine_stop() {
+	if (THREADS) {
+		for (unsigned int i = 0; i < _countof(THREADS); ++i) {
+			if (THREADS[i]) {
+				WaitForSingleObject(THREADS[i], INFINITE);
+				CloseHandle(THREADS[i]);
+			}
+		}
+		free(THREADS);
+		THREADS = NULL;
+	}
+}
+
+static void push_work_context(Context_Controller* controller, Thread_Work_Context context) {
+	
+}
+
+static Thread_Work_Context* pop_work_context(Context_Controller* controller, Thread_Work_Context* context) {
+	
+}
+
+static Thread_Work_Context create_thread_work_context(Image* input, unsigned char* output, Work_Type type) {
 	Thread_Work_Context context = { 0 };
-	unsigned int count = (img->width * img->height) / WORK_ITEM_PIXELS;
-	unsigned int remainder = (img->width * img->height) % WORK_ITEM_PIXELS;
+	Filter_Function function;
+	function = get_filter_function(type);
+	if (function == NULL) exit(EXIT_FAILURE);
+	unsigned int count = input->height/ WORK_ITEM_ROWS;
+	unsigned int remainder = input->height % WORK_ITEM_ROWS;
 	context.work_count = count;
 	context.work_index = 0;
 	context.works = (Work_Item*)calloc(context.work_count, sizeof(Work_Item));
 	for (int i = 0; i < count; ++i) {
-		context.works[i].image = img->data + (i * WORK_ITEM_PIXELS * img->channels);
-		context.works[i].pixel_count = WORK_ITEM_PIXELS;
+		context.works[i].image = input->data + (i * WORK_ITEM_ROWS * img->channels);
+		context.works[i].output = output-data + (i * WORK_ITEM_ROWS * img->channels);
+		context.works[i].width = input->width;
+		context.works[i].height = WORK_ITEM_ROWS;
+		context.works[i].function = function;
 	}
-	if (remainder > 0) context.works[count - 1].pixel_count += remainder;
+	if (remainder > 0) context.works[count - 1].height += remainder;
 
 	return context;
 }
 
-void destroy_thread_work_context(Thread_Work_Context context) {
+static void destroy_thread_work_context(Thread_Work_Context context) {
 	free(context.works);
 }
 
 // Function to invert the colors of an image
-void invert_color(Image* img) {
-	for (int i = 0; i < img->width * img->height * img->channels; i++) {
-		img->data[i] = 255 - img->data[i];
-	}
-
-	return;
-}
-
-// Function to convert an image to grayscale using multiple threads
-void grayscale(Image* img) {
-	assert(img->channels == 3); // If the image is not RGB, this will not work correctly.
-	if (img->width * img->height <= THRESHOLD) {
-		Work_Item work = { img->data, img->width * img->height };
-		grayscale_work(&work);
+void invert(Image* input, Image* output) {
+	assert(input->channels == 3);
+	if (input->height <= THRESHOLD) {
+		Work_Item work = { input->data, output->data, input->width, input->height, invert_color_work };
+		work->function(&work);
 		return;
 	}
-	assert(WORK_ITEM_PIXELS < THRESHOLD); // Ensure that the work item size is less than the threshold.
-	Thread_Work_Context context = create_thread_work_context(img);
-	SYSTEM_INFO sys_info;
-	GetSystemInfo(&sys_info);
-	unsigned int thread_num = min((int)sys_info.dwNumberOfProcessors, context.work_count / 4);
-	HANDLE *threads = (HANDLE *)calloc(thread_num, sizeof(HANDLE));
-	for (unsigned int i = 0; i < thread_num; ++i) {
-		threads[i] = CreateThread(NULL, 0, turn_grayscale_thread, &context, 0, NULL);
-	}
-	for (int i = 0; i < thread_num; i += MAXIMUM_WAIT_OBJECTS) {
-		int count = min(thread_num - i, MAXIMUM_WAIT_OBJECTS);
-		DWORD result = WaitForMultipleObjects(count, threads + i, TRUE, INFINITE);
-		assert(result >= WAIT_OBJECT_0 && result < WAIT_OBJECT_0 + MAXIMUM_WAIT_OBJECTS);
-	}
-	for (unsigned int i = 0; i < thread_num; ++i) {
-		CloseHandle(threads[i]);
-	}
-	destroy_thread_work_context(context);
+}
 
+// Function to convert an image to grayscale
+void grayscale(Image* input, Image* output) {
+	assert(input->channels == 3);
+	if (input->height <= THRESHOLD) {
+		Work_Item work = { input->data, output->data, input->width, input->height, grayscale_work};
+		work->function(&work);
+		return;
+	}
 	return;
 }
 
-void grayscale_work(Work_Item* work) {
+// Function to convert an image to sepia
+void sepia(Image* input, Image* output) {
+	assert(input->channels == 3);
+	if (input->height <= THRESHOLD) {
+		Work_Item work = { input->data, output->data, input->width, input->height, sepia_work };
+		work->function(&work);
+		return;
+	}
+	return;
+}
+
+static void invert_color_work(Work_Item* work) {
+	for (int i = 0; i < work->width * work->height; ++i) {
+		int idx = i * 3; // Assuming RGB format, each pixel has 3 channels
+		work->output[idx] = 255 - work->image[idx];
+		work->output[idx + 1] = 255 - work->image[idx + 1];
+		work->output[idx + 2] = 255 - work->image[idx + 2];
+	}
+}
+
+static void grayscale_work(Work_Item* work) {
 	for (int i = 0; i < work->pixel_count; ++i) {
 		int idx = i * 3; // Assuming RGB format, each pixel has 3 channels
 		unsigned char r = work->image[idx];
 		unsigned char g = work->image[idx + 1];
 		unsigned char b = work->image[idx + 2];
 		unsigned char gray = (unsigned char)(0.299f * r + 0.587f * g + 0.114f * b);
-		work->image[idx] = gray;
-		work->image[idx + 1] = gray;
-		work->image[idx + 2] = gray;
+		work->output[idx] = gray;
+		work->output[idx + 1] = gray;
+		work->output[idx + 2] = gray;
 	}
 }
 
+static void sepia_work(Work_Item* work) {
+	for (int i = 0; i < work->pixel_count; ++i) {
+		int idx = i * 3; // Assuming RGB format, each pixel has 3 channels
+		unsigned char r = work->image[idx];
+		unsigned char g = work->image[idx + 1];
+		unsigned char b = work->image[idx + 2];
+		work->output[idx] = (unsigned char)min(255, (int)(0.393f * r + 0.769f * g + 0.189f * b));
+		work->output[idx + 1] = (unsigned char)min(255, (int)(0.349f * r + 0.686f * g + 0.168f * b));
+		work->output[idx + 2] = (unsigned char)min(255, (int)(0.272f * r + 0.534f * g + 0.131f * b));
+	}
+}
 
+static inline Filter_Function get_filter_function(Work_Type type) {
+	switch (type) {
+		case GRAYSCALE: return grayscale_work;
+		case INVERSE: return invert_color_work;
+		case SEPIA: return sepia_work;
+		default: return NULL;
+	}
+}
 
 
 

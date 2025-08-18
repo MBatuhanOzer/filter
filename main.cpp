@@ -1,13 +1,15 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include "filter.h"
+#include <Windows.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "./libs/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "./libs/stb_image_write.h"
 
 // Channels for use in image processing
-#define CHANNELS 3
+constexpr uint8_t CHANNELS = 3;
 
 enum OperationType {
 	OP_NONE,
@@ -48,6 +50,10 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	uint64_t freq, start_time, end_time;
+	QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
+
+	QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
 	switch (operation) {
 	case(OP_GRAYSCALE):
 		grayscale(&img);
@@ -60,6 +66,15 @@ int main(int argc, char** argv) {
 		stbi_image_free(img.data);
 		return 1;
 	}
+	QueryPerformanceCounter((LARGE_INTEGER*)&end_time);
+
+	uint64_t total_data_amount = img.width * img.height * img.channels;
+	double elapsed_s = ((double)end_time - start_time) / (double)freq;
+	double elapsed_ms = elapsed_s * 1000.0;
+
+	double throughput_mbs = (double)total_data_amount / elapsed_s;
+	throughput_mbs /= (1024.0 * 1024.0);
+	printf("Operation took %.3fms. Throughput %.3f MB/s\n", elapsed_ms, throughput_mbs);
 
 	switch (ext) {
 	case PNG:
