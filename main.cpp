@@ -1,11 +1,15 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include "filter.h"
+#include <Windows.h>
 #define STB_IMAGE_IMPLEMENTATION
-#include "../libs/stb_image.h"
+#include "./libs/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "../libs/stb_image_write.h"
+#include "./libs/stb_image_write.h"
 
+// Channels for use in image processing
+constexpr uint8_t CHANNELS = 3;
 
 enum OperationType {
 	OP_NONE,
@@ -39,17 +43,17 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	Image img = { 0 };
-	img.data = stbi_load(argv[2], &img.width, &img.height, &img.channels, 4);
+	img.data = stbi_load(argv[2], &img.width, &img.height, NULL, CHANNELS);
+	img.channels = CHANNELS;
 	if (NULL == img.data) {
 		fprintf(stderr, "Error loading image: %s\n", stbi_failure_reason());
 		return 1;
 	}
-	if (img.channels < 3) {
-		fprintf(stderr, "File cannot be grayscaled. It must have at least 3 channels (RGB).\n");
-		stbi_image_free(img.data);
-		return 1;
-	}
 
+	uint64_t freq, start_time, end_time;
+	QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
+
+	QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
 	switch (operation) {
 	case(OP_GRAYSCALE):
 		grayscale(&img);
@@ -62,19 +66,30 @@ int main(int argc, char** argv) {
 		stbi_image_free(img.data);
 		return 1;
 	}
+	QueryPerformanceCounter((LARGE_INTEGER*)&end_time);
+
+	uint64_t total_data_amount = img.width * img.height * img.channels;
+	double elapsed_s = ((double)end_time - start_time) / (double)freq;
+	double elapsed_ms = elapsed_s * 1000.0;
+
+	double throughput_mbs = (double)total_data_amount / elapsed_s;
+	throughput_mbs /= (1024.0 * 1024.0);
+	printf("Operation took %.3fms. Throughput %.3f MB/s\n", elapsed_ms, throughput_mbs);
 
 	switch (ext) {
 	case PNG:
-		if (!stbi_write_png(argv[3], img.width, img.height, 4, img.data, img.width * 4)) {
+		if (!stbi_write_png(argv[3], img.width, img.height, CHANNELS, img.data, img.width * CHANNELS)) {
 			fprintf(stderr, "Error writing image: %s\n", argv[3]);
-		} else {
+		}
+		else {
 			printf("Image saved successfully as %s\n", argv[3]);
 		}
 		break;
 	case JPG:
-		if (!stbi_write_jpg(argv[3], img.width, img.height, 4, img.data, 100)) {
+		if (!stbi_write_jpg(argv[3], img.width, img.height, CHANNELS, img.data, 100)) {
 			fprintf(stderr, "Error writing image: %s\n", argv[3]);
-		} else {
+		}
+		else {
 			printf("Image saved successfully as %s\n", argv[3]);
 		}
 		break;
