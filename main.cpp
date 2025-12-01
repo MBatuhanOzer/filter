@@ -4,9 +4,9 @@
 #include "filter.h"
 #include <Windows.h>
 #define STB_IMAGE_IMPLEMENTATION
-#include "./libs/stb_image.h"
+#include "./dependencies/stb/stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "./libs/stb_image_write.h"
+#include "./dependencies/stb/stb_image_write.h"
 
 // Channels for use in image processing
 constexpr uint8_t CHANNELS = 3;
