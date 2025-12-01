@@ -1,1 +1,0 @@
-cl *.cpp /Fe:filter.exe /O2 /EHsc
