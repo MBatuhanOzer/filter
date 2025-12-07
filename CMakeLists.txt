@@ -68,8 +68,12 @@ target_include_directories(filter_core PUBLIC
 # 3. UI Application
 # -----------------------------------------------------------------------------
 add_executable(FilterUI
+    WIN32
     src/UI/main.cpp
 )
+
+# Tell the linker to use mainCRTStartup as the entry point to avoid console window
+set_target_properties(FilterUI PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
 
 # Link our local libraries
 target_link_libraries(FilterUI PRIVATE 
