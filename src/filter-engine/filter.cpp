@@ -75,10 +75,13 @@ static void work_context_node_enqueue(Work_Context_Controller* controller, Work_
 static void work_context_node_dequeue(Work_Context_Controller* controller);
 static Work_Context work_context_create(Image* input, unsigned char* output, Work_Type type);
 static void work_context_destroy(Work_Context context);
-static void invert_color_work(Work_Item* work);
-static void grayscale_work(Work_Item* work);
-static void sepia_work(Work_Item* work);
-static inline Filter_Function get_filter_function(Work_Type type);
+static void invert_color_work_3channel(Work_Item* work);
+static void grayscale_work_3channel(Work_Item* work);
+static void sepia_work_3channel(Work_Item* work);
+static void invert_color_work_4channel(Work_Item* work);
+static void grayscale_work_4channel(Work_Item* work);
+static void sepia_work_4channel(Work_Item* work);
+static inline Filter_Function get_filter_function(Work_Type type, int channels);
 static void general_filter_helper(Filter_Engine engine, Image* input, Image* output, Work_Type type);
 
 static DWORD _stdcall thread_proc(void* params) {
@@ -142,10 +145,7 @@ static void work_context_node_arena_destroy(Work_Context_Node_Arena* arena) {
 }
 
 static Work_Context_Node* work_context_node_arena_allocate(Work_Context_Node_Arena* arena) {
-	if (arena->free_list == NULL) {
-		assert(false);
-		// TODO: Choose to expand the arena or fail 
-	}
+	assert(arena->free_list != NULL && "Arena out of memory, increase size");
 	Work_Context_Node* node = arena->free_list;
 	arena->free_list = arena->free_list->next;
 	node->next = NULL;
@@ -197,7 +197,7 @@ static void work_context_node_dequeue(Work_Context_Controller* controller) {
 static Work_Context work_context_create(Image* input, unsigned char* output, Work_Type type) {
 	Work_Context context = { 0 };
 	Filter_Function function;
-	function = get_filter_function(type);
+	function = get_filter_function(type, input->channels);
 	assert(function != NULL && "Check get_filter_function()");
 	uint32_t count = input->height/ WORK_ITEM_ROWS;
 	assert(count > 0 && "You forgot to add a suffiicent threshold");
@@ -223,7 +223,7 @@ static void work_context_destroy(Work_Context context) {
 	free(context.works);
 }
 
-static void invert_color_work(Work_Item* work) {
+static void invert_color_work_3channel(Work_Item* work) {
 	for (uint32_t i = 0; i < work->width * work->height; ++i) {
 		uint32_t idx = i * 3; // Assuming RGB format, each pixel has 3 channels
 		work->output[idx] = 255 - work->image[idx];
@@ -232,7 +232,7 @@ static void invert_color_work(Work_Item* work) {
 	}
 }
 
-static void grayscale_work(Work_Item* work) {
+static void grayscale_work_3channel(Work_Item* work) {
 	for (uint32_t i = 0; i < work->width * work->height; ++i) {
 		uint32_t idx = i * 3; // Assuming RGB format, each pixel has 3 channels
 		unsigned char r = work->image[idx];
@@ -245,7 +245,7 @@ static void grayscale_work(Work_Item* work) {
 	}
 }
 
-static void sepia_work(Work_Item* work) {
+static void sepia_work_3channel(Work_Item* work) {
 	for (uint32_t i = 0; i < work->width * work->height; ++i) {
 		uint32_t idx = i * 3; // Assuming RGB format, each pixel has 3 channels
 		unsigned char r = work->image[idx];
@@ -257,21 +257,76 @@ static void sepia_work(Work_Item* work) {
 	}
 }
 
+static void invert_color_work_4channel(Work_Item* work) {
+	for (uint32_t i = 0; i < work->width * work->height; ++i) {
+		uint32_t idx = i * 4; // Assuming RGBA format, each pixel has 4 channels
+		work->output[idx] = 255 - work->image[idx];
+		work->output[idx + 1] = 255 - work->image[idx + 1];
+		work->output[idx + 2] = 255 - work->image[idx + 2];
+		work->output[idx + 3] = work->image[idx + 3]; 
+	}
+}
+
+static void grayscale_work_4channel(Work_Item* work) {
+	for (uint32_t i = 0; i < work->width * work->height; ++i) {
+		uint32_t idx = i * 4; // Assuming RGBA format, each pixel has 4 channels
+		unsigned char r = work->image[idx];
+		unsigned char g = work->image[idx + 1];
+		unsigned char b = work->image[idx + 2];
+		unsigned char gray = (unsigned char)(0.299f * r + 0.587f * g + 0.114f * b);
+		work->output[idx] = gray;
+		work->output[idx + 1] = gray;
+		work->output[idx + 2] = gray;
+		work->output[idx + 3] = work->image[idx + 3];
+	}
+}
+
+static void sepia_work_4channel(Work_Item* work) {
+	for (uint32_t i = 0; i < work->width * work->height; ++i) {
+		uint32_t idx = i * 4; // Assuming RGBA format, each pixel has 3 channels
+		unsigned char r = work->image[idx];
+		unsigned char g = work->image[idx + 1];
+		unsigned char b = work->image[idx + 2];
+		work->output[idx] = (unsigned char)min(255, (int)(0.393f * r + 0.769f * g + 0.189f * b));
+		work->output[idx + 1] = (unsigned char)min(255, (int)(0.349f * r + 0.686f * g + 0.168f * b));
+		work->output[idx + 2] = (unsigned char)min(255, (int)(0.272f * r + 0.534f * g + 0.131f * b));
+		work->output[idx + 3] = work->image[idx + 3];
+	}
+}
+
 // Function to get the appropriate filter function based on the work type
-static inline Filter_Function get_filter_function(Work_Type type) {
-	switch (type) {
-		case GRAYSCALE: return grayscale_work;
-		case INVERT: return invert_color_work;
-		case SEPIA: return sepia_work;
+static inline Filter_Function get_filter_function(Work_Type type, int channel) {
+	if (channel == 3){
+		switch (type) {
+		case GRAYSCALE: return grayscale_work_3channel;
+		case INVERT: return invert_color_work_3channel;
+		case SEPIA: return sepia_work_3channel;
 		default: return NULL;
+		}
+	}
+	else if (channel == 4){
+		switch (type) {
+		case GRAYSCALE: return grayscale_work_4channel;
+		case INVERT: return invert_color_work_4channel;
+		case SEPIA: return sepia_work_4channel;
+		default: return NULL;
+		}
+	}
+	else {
+		return NULL;
 	}
 }
 
 // Helper function for single step filters by Work_Type enum. Built to prevent code duplication.
 static void general_filter_helper(Filter_Engine engine, Image* input, Image* output, Work_Type type) {
-	assert(input->channels == 3);
+	assert(input->channels == 3 || input->channels == 4);
+	Filter_Function function = get_filter_function(type, input->channels);
+	if (function == NULL) {
+		fprintf(stderr, "Unsupported filter type or image channel count\n");
+		return;
+	}
 	if (input->height <= THRESHOLD) {
-		Work_Item work = { input->data, output->data, input->width, input->height, get_filter_function(type) };
+		Work_Item work = { input->data, output->data, input->width, input->height, function };
 		work.function(&work);
 		return;
 	}
@@ -288,32 +343,7 @@ static void general_filter_helper(Filter_Engine engine, Image* input, Image* out
 
 // Mandatory function to call before using the filter engine
 Filter_Engine filter_engine_create() {
-
 	Filter_Engine engine = (Filter_Engine)malloc(sizeof(_Filter_Engine));
-	if (!engine) return NULL;
-	SYSTEM_INFO sys_info;
-	GetSystemInfo(&sys_info);
-	size_t thread_count = sys_info.dwNumberOfProcessors;
-	if (thread_count > MAX_THREADS) thread_count = MAX_THREADS;
-	engine->t_context.thread_count = thread_count;
-	engine->t_context.threads = (HANDLE*)calloc(thread_count, sizeof(HANDLE));
-	if (!engine->t_context.threads) return NULL;
-	size_t arena_size = DEFAULT_ARENA_SIZE;
-	work_context_node_arena_initialize(&engine->wc_controller.arena, arena_size);
-	engine->wc_controller.head = NULL;
-	engine->wc_controller.tail = NULL;
-	engine->wc_controller.shutdown = FALSE;
-	InitializeCriticalSection(&engine->wc_controller.cs);
-	InitializeConditionVariable(&engine->wc_controller.cv_start);
-	InitializeConditionVariable(&engine->wc_controller.cv_done);
-	assert(engine->t_context.threads != NULL && "Failed to allocate memory for thread handles");
-	for (size_t i = 0; i < thread_count; ++i) {
-		engine->t_context.threads[i] = CreateThread(NULL, 0, thread_proc, engine, 0, NULL);
-		if (engine->t_context.threads[i] == NULL) {
-			fprintf(stderr, "Failed to create thread %zu\n", i);
-			exit(EXIT_FAILURE);
-		}
-	}
 
 	return engine;
 }
