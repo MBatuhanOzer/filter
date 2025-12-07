@@ -55,6 +55,8 @@ int main(int argc, char** argv) {
 				continue;
 			}
 
+			std::string filtered_path;
+
 			QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
 			filter_engine_invert(engine, &input_image, &output_image);
 			filter_engine_wait(engine);
@@ -62,7 +64,8 @@ int main(int argc, char** argv) {
 			elapsed_s = ((double)end_time - start_time) / (double)freq;
 			elapsed_ms = elapsed_s * 1000.0;
 			printf("Inversion of %s took %.3fms\n", filename.c_str(), elapsed_ms);
-			stbi_write_jpg(output_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
+			filtered_path = (output_dir / (filename  + "_invert")).string();
+			stbi_write_jpg(filtered_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
 
 			QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
 			filter_engine_grayscale(engine, &input_image, &output_image);
@@ -71,7 +74,8 @@ int main(int argc, char** argv) {
 			elapsed_s = ((double)end_time - start_time) / (double)freq;
 			elapsed_ms = elapsed_s * 1000.0;
 			printf("Grayscale of %s took %.3fms\n", filename.c_str(), elapsed_ms);
-			stbi_write_jpg(output_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
+			filtered_path = (output_dir / (filename + "_grayscale")).string();
+			stbi_write_jpg(filtered_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
 
 			QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
 			filter_engine_sepia(engine, &input_image, &output_image);
@@ -80,7 +84,8 @@ int main(int argc, char** argv) {
 			elapsed_s = ((double)end_time - start_time) / (double)freq;
 			elapsed_ms = elapsed_s * 1000.0;
 			printf("Sepia of %s took %.3fms\n", filename.c_str(), elapsed_ms);
-			stbi_write_jpg(output_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
+			filtered_path = (output_dir / (filename + "_sepia")).string();
+			stbi_write_jpg(filtered_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
 
 			stbi_image_free(input_image.data);
 			free(output_image.data);
