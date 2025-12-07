@@ -207,8 +207,8 @@ static Work_Context work_context_create(Image* input, unsigned char* output, Wor
 	context.work_done = 0;
 	context.works = (Work_Item*)calloc(context.work_count, sizeof(Work_Item));
 	for (uint32_t i = 0; i < count; ++i) {
-		context.works[i].image = input->data + (i * WORK_ITEM_ROWS * input->channels);
-		context.works[i].output = output + (i * WORK_ITEM_ROWS * input->channels);
+		context.works[i].image = input->data + (i * WORK_ITEM_ROWS * input->channels * input->width);
+		context.works[i].output = output + (i * WORK_ITEM_ROWS * input->channels * input->width);
 		context.works[i].width = input->width;
 		context.works[i].height = WORK_ITEM_ROWS;
 		context.works[i].function = function;
