@@ -2,10 +2,10 @@
 #include <stdint.h>
 #include <windows.h> // For high-resolution timing
 #define STB_IMAGE_IMPLEMENTATION
-#include "../dependencies/stb/stb_image.h"
+#include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "../dependencies/stb/stb_image_write.h"
-#include "../src/filter-engine/filter.h"
+#include "stb_image_write.h"
+#include "filter.h"
 
 // C++ specific libraries
 #include <filesystem>
@@ -19,17 +19,18 @@ int main(int argc, char** argv) {
 	QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
 	QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
 	Filter_Engine engine = filter_engine_create();
+	filter_engine_initialize(engine, DEFAULT, DEFAULT);
 	assert(engine && "There should be engine to begin.");
 	QueryPerformanceCounter((LARGE_INTEGER*)&end_time);
 	elapsed_s = ((double)end_time - start_time) / (double)freq;
 	elapsed_ms = elapsed_s * 1000.0;
 	printf("Filter engine initialization took %.3fms\n", elapsed_ms);
-	fs::path input_dir = "../../../tests/images/input";
+	fs::path input_dir = "./images/input";
 	if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
 		fprintf(stderr, "Input directory does not exist or is not a directory: %s\n", input_dir.string().c_str());
 		return -1;
 	}
-	fs::path output_dir = "../../../tests/images/output";
+	fs::path output_dir = "./images/output";
 	if (!fs::exists(output_dir)) {
 		fs::create_directories(output_dir);
 	}
@@ -64,7 +65,7 @@ int main(int argc, char** argv) {
 			elapsed_s = ((double)end_time - start_time) / (double)freq;
 			elapsed_ms = elapsed_s * 1000.0;
 			printf("Inversion of %s took %.3fms\n", filename.c_str(), elapsed_ms);
-			filtered_path = (output_dir / (filename  + "_invert")).string();
+			filtered_path = (output_dir / ("1" + filename)).string();
 			stbi_write_jpg(filtered_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
 
 			QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
@@ -74,7 +75,7 @@ int main(int argc, char** argv) {
 			elapsed_s = ((double)end_time - start_time) / (double)freq;
 			elapsed_ms = elapsed_s * 1000.0;
 			printf("Grayscale of %s took %.3fms\n", filename.c_str(), elapsed_ms);
-			filtered_path = (output_dir / (filename + "_grayscale")).string();
+			filtered_path = (output_dir / ("2" + filename)).string();
 			stbi_write_jpg(filtered_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
 
 			QueryPerformanceCounter((LARGE_INTEGER*)&start_time);
@@ -84,7 +85,7 @@ int main(int argc, char** argv) {
 			elapsed_s = ((double)end_time - start_time) / (double)freq;
 			elapsed_ms = elapsed_s * 1000.0;
 			printf("Sepia of %s took %.3fms\n", filename.c_str(), elapsed_ms);
-			filtered_path = (output_dir / (filename + "_sepia")).string();
+			filtered_path = (output_dir / ("3" + filename)).string();
 			stbi_write_jpg(filtered_path.c_str(), output_image.width, output_image.height, output_image.channels, output_image.data, 100);
 
 			stbi_image_free(input_image.data);
