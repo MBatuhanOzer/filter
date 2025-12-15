@@ -2,8 +2,11 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
-#include <stdio.h>
 #include <stdlib.h>
+#include <string>
+#include <algorithm>
+#include <Windows.h>
+#include <commdlg.h> // For common dialog boxes
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -16,11 +19,87 @@
 #define GL_CLAMP_TO_EDGE 0x812F // We use this magic number because Microsoft's GL.h does not have it. It is ancient.
 #endif
 
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h> // For hwndOwner for File Dialog
+
 struct AppState {
     GLuint textureID;
     Image image;
     bool imageLoaded;
 };
+
+// Opens a Windows file dialog to select an image file
+std::string OpenFileDialog(GLFWwindow* window) {
+    OPENFILENAMEA ofn;
+    char szFile[260] = { 0 };
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = glfwGetWin32Window(window); // To prevent using main window before selecting file
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Image Files\0*.png;*.jpg;*.jpeg;*.bmp\0";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+    if (GetOpenFileNameA(&ofn) == TRUE) {
+        return std::string(ofn.lpstrFile);
+    }
+    return std::string(); 
+}
+
+std::string SaveFileDialog(GLFWwindow* window) {
+    OPENFILENAMEA ofn;
+    char szFile[260] = { 0 };
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = glfwGetWin32Window(window);
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+
+    // Specific filters for the formats stb_image_write supports
+    ofn.lpstrFilter = "PNG File (*.png)\0*.png\0JPG File (*.jpg)\0*.jpg\0BMP File (*.bmp)\0*.bmp\0TGA File (*.tga)\0*.tga\0";
+    ofn.nFilterIndex = 1; 
+
+    // Default extension
+    ofn.lpstrDefExt = "png";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+    if (GetSaveFileNameA(&ofn) == TRUE) {
+        return std::string(ofn.lpstrFile);
+    }
+    return std::string();
+}
+
+void SaveImageByExtension(const std::string& filepath, const Image& image) {
+    size_t dotPos = filepath.find_last_of('.');
+    std::string ext = "";
+    if (dotPos != std::string::npos) {
+        ext = filepath.substr(dotPos);
+    }
+
+    // I am being lazy for easier comparison
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    int result = 0;
+    if (ext == ".png") {
+        result = stbi_write_png(filepath.c_str(), image.width, image.height, image.channels, image.data, image.width * image.channels);
+    }
+    else if (ext == ".jpg" || ext == ".jpeg") {
+        result = stbi_write_jpg(filepath.c_str(), image.width, image.height, image.channels, image.data, 90);
+    }
+    else if (ext == ".bmp") {
+        result = stbi_write_bmp(filepath.c_str(), image.width, image.height, image.channels, image.data);
+    }
+    else if (ext == ".tga") {
+        result = stbi_write_tga(filepath.c_str(), image.width, image.height, image.channels, image.data);
+    }
+    else {
+        // Fallback: If extension is unknown, save as PNG
+        result = stbi_write_png(filepath.c_str(), image.width, image.height, image.channels, image.data, image.width * image.channels);
+    }
+}
 
 // Updates image data in existing OpenGL texture
 void UpdateTexture(GLuint textureID, Image* image) {
@@ -78,7 +157,7 @@ void ApplyFilter(Filter_Engine engine, AppState* appState, Work_Type type) {
     outputImg.width = inputImg.width;
     outputImg.height = inputImg.height;
     outputImg.channels = inputImg.channels;
-    outputImg.data = (unsigned char*)calloc(inputImg.width * inputImg.height, 4);
+    outputImg.data = (unsigned char*)calloc(inputImg.width * inputImg.height, inputImg.channels);
 
     switch (type) {
     case GRAYSCALE:     filter_engine_grayscale(engine, &inputImg, &outputImg); break;
@@ -121,8 +200,6 @@ int main(void) {
 
     // App State
     AppState appState = { 0 };
-    char loadPath[256] = "";
-    char savePath[256] = "";
 
     // Main Loop
     while (!glfwWindowShouldClose(window)) {
@@ -143,14 +220,32 @@ int main(void) {
         ImGui::Text("File Operations");
         ImGui::Separator();
 
-        Image image;
-        ImGui::InputText("Path", loadPath, IM_ARRAYSIZE(loadPath));
-        if (ImGui::Button("Load Image", ImVec2(-1, 0))) {
-            image.data = stbi_load(loadPath, (int*)&image.width, (int*)&image.height, (int*)&image.channels, 0);
-            if (!image.data) {
-                ImGui::TextColored(ImVec4(1, 0, 0, 1), "Failed to load image.");
+        // I want them to persist between frames
+        static std::string statusMessage = "";
+        static ImVec4 statusColor = ImVec4(1, 1, 1, 1);
+
+        if (ImGui::Button("Open Image...", ImVec2(-1, 0))) {
+            Image image = { 0 };
+            std::string selectedPath = OpenFileDialog(window);
+
+            if (!selectedPath.empty()) {
+                image.data = stbi_load(selectedPath.c_str(), (int*)&image.width, (int*)&image.height, (int*)&image.channels, 0);
+
+                if (!image.data) {
+                    statusMessage = "Failed to load image.";
+                    statusColor = ImVec4(1, 0, 0, 1); 
+                }
+                else {
+                    LoadImageToTexture(&appState, &image);
+
+                    statusMessage = "Loaded: " + selectedPath;
+                    statusColor = ImVec4(0, 1, 0, 1); 
+                }
             }
-            LoadImageToTexture(&appState, &image);
+        }
+
+        if (!statusMessage.empty()) {
+            ImGui::TextColored(statusColor, "%s", statusMessage.c_str());
         }
 
         ImGui::Dummy(ImVec2(0, 10));
@@ -175,11 +270,14 @@ int main(void) {
         ImGui::Dummy(ImVec2(0, 20));
         ImGui::Text("Export");
         ImGui::Separator();
-        ImGui::InputText("Save As", savePath, IM_ARRAYSIZE(savePath));
 
         if (!appState.imageLoaded) ImGui::BeginDisabled();
-        if (ImGui::Button("Save to Disk", ImVec2(-1, 0))) {
-            
+        if (ImGui::Button("Save to disk...", ImVec2(-1, 0))) {
+            std::string savePath = SaveFileDialog(window);
+
+            if (!savePath.empty()) {
+                SaveImageByExtension(savePath, appState.image); 
+            }
         }
         if (!appState.imageLoaded) ImGui::EndDisabled();
 
